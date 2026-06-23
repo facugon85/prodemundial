@@ -1,0 +1,47 @@
+-- Solo se generan premios por marcador exacto (no más por ganador correcto)
+create or replace function process_match_result(p_match_id int)
+returns void
+language plpgsql security definer as $$
+declare
+  m   record;
+  p   record;
+  res text;
+  pw  text;
+  rw  text;
+  c   text;
+begin
+  if not exists (select 1 from public.profiles where id = auth.uid() and is_admin) then
+    raise exception 'Unauthorized';
+  end if;
+
+  select result_h, result_a into m from public.matches where id = p_match_id;
+
+  for p in (
+    select * from public.predictions
+    where match_id = p_match_id and result is null
+  ) loop
+    if p.pred_h = m.result_h and p.pred_a = m.result_a then
+      res := 'exact';
+    else
+      pw := case when p.pred_h > p.pred_a then 'home'
+                 when p.pred_h < p.pred_a then 'away'
+                 else 'draw' end;
+      rw := case when m.result_h > m.result_a then 'home'
+                 when m.result_h < m.result_a then 'away'
+                 else 'draw' end;
+      res := case when pw = rw then 'winner' else 'miss' end;
+    end if;
+
+    update public.predictions set result = res where id = p.id;
+
+    -- Solo marcador exacto genera premio
+    if res = 'exact' then
+      c := generate_prize_code(res);
+      insert into public.prizes (user_id, prediction_id, match_id, type, code)
+      values (p.user_id, p.id, p_match_id, res, c);
+    end if;
+  end loop;
+
+  update public.matches set status = 'synced' where id = p_match_id;
+end;
+$$;
