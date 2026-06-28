@@ -1597,8 +1597,8 @@ function UsuariosTab() {
                 ? `${rem.getDate()}/${rem.getMonth()+1} ${rem.getHours().toString().padStart(2,'0')}:${rem.getMinutes().toString().padStart(2,'0')}`
                 : null
               return (
-                <tr key={u.id} style={{ opacity: u.isAdmin ? .5 : 1, cursor: u.isAdmin ? 'default' : 'pointer' }}
-                  onClick={e => { if (!u.isAdmin && !e.target.closest('input')) setSelectedUser(u) }}>
+                <tr key={u.id} style={{ cursor: 'pointer' }}
+                  onClick={e => { if (!e.target.closest('input')) setSelectedUser(u) }}>
                   <td style={{ textAlign:'center' }}>
                     {!u.isAdmin && (
                       <input

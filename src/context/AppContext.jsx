@@ -351,6 +351,69 @@ export function AppProvider({ children }) {
 
   useEffect(() => { loadAll() }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Suscripción Realtime: cuando un partido pasa a 'synced', refresca predicción + premios del usuario
+  useEffect(() => {
+    if (!supabaseConfigured || !user) return
+
+    const channel = supabase
+      .channel(`match-synced-${user.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches' }, async (payload) => {
+        if (payload.new?.status !== 'synced') return
+        const matchId = payload.new.id
+
+        // Actualizar el estado local del partido
+        setMatches(prev => prev.map(m =>
+          m.id === matchId
+            ? { ...m, status: 'synced',
+                result: { h: payload.new.result_h, a: payload.new.result_a },
+                advancer: payload.new.advancer ?? null }
+            : m
+        ))
+
+        // Si el usuario tiene predicción para este partido, refrescar resultado e historial
+        const { data: predRow } = await supabase
+          .from('predictions')
+          .select('match_id, pred_h, pred_a, result, matches(round, date, t1, f1, t2, f2, result_h, result_a)')
+          .eq('user_id', user.id)
+          .eq('match_id', matchId)
+          .maybeSingle()
+
+        if (!predRow) return
+
+        const m = predRow.matches
+        const histEntry = {
+          matchId: predRow.match_id,
+          round: m?.round ?? '', date: m?.date ?? '',
+          t1: m?.t1 ?? '', f1: m?.f1 ?? '',
+          t2: m?.t2 ?? '', f2: m?.f2 ?? '',
+          pred: { h: predRow.pred_h, a: predRow.pred_a },
+          real: { h: m?.result_h, a: m?.result_a },
+          result: predRow.result,
+        }
+        setHistory(prev => [...prev.filter(e => e.matchId !== matchId), histEntry])
+
+        if (predRow.result === 'exact') {
+          const { data: freshPrizes } = await supabase
+            .from('prizes')
+            .select('id, type, code, redeemed, created_at, match_id, matches(t1, f1, t2, f2, result_h, result_a)')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+          if (freshPrizes) {
+            setPrizes(freshPrizes.map(p => ({
+              id: p.id, userId: user.id, type: p.type, code: p.code,
+              redeemed: p.redeemed, createdAt: p.created_at,
+              match: p.matches
+                ? `${p.matches.f1} ${p.matches.t1} ${p.matches.result_h}–${p.matches.result_a} ${p.matches.t2} ${p.matches.f2}`
+                : '',
+            })))
+          }
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── notifications ───────────────────────────────────────────
 
   const addNotif = useCallback((type, title, body) => {
